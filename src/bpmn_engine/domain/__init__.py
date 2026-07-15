@@ -13,6 +13,7 @@ from bpmn_engine.domain.enums import (
     WorkflowInstanceStatus,
     WorkflowStatus,
 )
+from bpmn_engine.domain.gates import GateEvaluator, mock_lambda_invoke, mock_rest_call
 from bpmn_engine.domain.models import (
     DependencyMatrix,
     LogicGate,
@@ -37,6 +38,7 @@ __all__ = [
     "WorkflowInstanceStatus",
     "WorkflowStatus",
     "DependencyMatrix",
+    "GateEvaluator",
     "LogicGate",
     "ResourceSpec",
     "Task",
@@ -44,4 +46,6 @@ __all__ = [
     "Worker",
     "Workflow",
     "WorkflowValidationError",
+    "mock_lambda_invoke",
+    "mock_rest_call",
 ]

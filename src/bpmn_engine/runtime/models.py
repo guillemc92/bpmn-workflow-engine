@@ -14,13 +14,13 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from bpmn_engine.domain.enums import (
-    GateType,
     IncidentType,
     ResetScope,
     TaskStatus,
     WorkflowInstanceStatus,
 )
-from bpmn_engine.domain.models import Task, Workflow
+from bpmn_engine.domain.gates import GateEvaluator
+from bpmn_engine.domain.models import Workflow
 
 
 class TaskInstanceError(ValueError):
@@ -169,7 +169,7 @@ class WorkflowInstance:
             if len(pred_statuses) < len(predecessors):
                 continue  # todavia falta que arranque/termine algun predecesor
             task_def = self.workflow.tasks[target_id]
-            if self._gate_satisfied(task_def, pred_statuses):
+            if GateEvaluator.can_start(task_def, pred_statuses):
                 self._spawn(target_id, iteration=1)
                 self.enqueue(target_id)
                 newly_ready.append(target_id)
@@ -236,28 +236,6 @@ class WorkflowInstance:
         instance.status = to_status
         self._record(instance, from_status, to_status, note)
         return instance
-
-    def _gate_satisfied(self, task: Task, pred_statuses: dict[str, TaskStatus]) -> bool:
-        """Evaluacion base de compuertas (AND/OR/XOR) usada por navigate_to_targets.
-
-        SCRIPT/REST/LAMBDA/COMPLEX se delegan al `evaluator` de la LogicGate si
-        existe; el dispatcher completo por GateType se termina de resolver en
-        el modulo de orquestacion (T4), que puede reemplazar este metodo via
-        composicion sin tocar el resto del runtime.
-        """
-        completed = {tid for tid, status in pred_statuses.items() if status is TaskStatus.COMPLETED}
-        if task.logic_gate is None:
-            return len(completed) == len(pred_statuses)
-        gate = task.logic_gate
-        if gate.gate_type is GateType.AND:
-            return len(completed) == len(pred_statuses)
-        if gate.gate_type is GateType.OR:
-            return len(completed) >= 1
-        if gate.gate_type is GateType.XOR:
-            return len(completed) == 1
-        if gate.evaluator is not None:
-            return bool(gate.evaluator(pred_statuses))
-        return False
 
     def _all_terminal(self) -> bool:
         return all(self.current(tid).status in _TERMINAL_STATUSES for tid in self._instances)
