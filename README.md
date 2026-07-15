@@ -19,6 +19,17 @@ pip install -e ".[test]"
 pytest tests/ -v --cov=src/bpmn_engine
 ```
 
+## Ejemplo ejecutable
+
+```bash
+python examples/quickstart.py
+```
+
+Corre de punta a punta un flujo de aprobacion con split paralelo (concurrente,
+`ThreadPoolExecutor`), join AND, asignacion skill-based de workers, y un
+incidente que dispara un reset BACKWARD (rework) antes de completar. Ver
+[`examples/quickstart.py`](examples/quickstart.py).
+
 ## Documentación
 
 - [`docs/PRD.md`](docs/PRD.md) — qué se construye y por qué.
