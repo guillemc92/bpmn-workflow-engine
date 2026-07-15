@@ -7,20 +7,26 @@ metodos publicos que envuelven las operaciones de ciclo de vida de
 `WorkflowInstance`, agregandoles la semantica de negocio de orquestacion
 (asignacion de workers, liberacion de carga, politica de completion).
 
-`onReset`/`onRetryExhausted` se agregan en el modulo de incidentes (T7) y
-`onSlaBreach` en el de concurrencia/SLA (T8) — ambos reusan `self._emit`.
+`onReset`/`onRetryExhausted` (S4.6) y `onSlaBreach` (deadlines reactivos, sin
+cron) reusan el mismo `self._emit`. `run_task` integra el Executor real
+(`SequentialExecutor` por defecto, o `ThreadPoolExecutor` para concurrencia
+de verdad) con el ciclo de vida: al resolverse el Future completa la tarea o
+levanta un incidente automaticamente.
 """
 
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from bpmn_engine.domain.enums import CompletionPolicy, IncidentType, ResetScope
+from bpmn_engine.domain.models import Worker
+from bpmn_engine.execution.executor import Executor, Future, SequentialExecutor
+from bpmn_engine.execution.sla import SlaMonitor
 from bpmn_engine.orchestration.assignment import select_workers
 from bpmn_engine.orchestration.queue import ReadyQueue
 from bpmn_engine.persistence.repository import InMemoryRepository
-from bpmn_engine.domain.models import Worker
 from bpmn_engine.runtime.models import Incident, WorkflowInstance
 
 _COMPLETION_THRESHOLD: dict[CompletionPolicy, Callable[[int], int]] = {
@@ -35,12 +41,22 @@ class OrchestratorError(ValueError):
 
 
 class Orchestrator:
-    def __init__(self, workflow_instance: WorkflowInstance, workers: InMemoryRepository[Worker]) -> None:
+    def __init__(
+        self,
+        workflow_instance: WorkflowInstance,
+        workers: InMemoryRepository[Worker],
+        executor: Optional[Executor] = None,
+        sla_monitor: Optional[SlaMonitor] = None,
+    ) -> None:
         self.wi = workflow_instance
         self.workers = workers
         self.queue = ReadyQueue()
+        self.executor: Executor = executor if executor is not None else SequentialExecutor()
+        self.sla = sla_monitor if sla_monitor is not None else SlaMonitor(clock=workflow_instance.clock)
         self._hooks: dict[str, list[Callable[..., None]]] = defaultdict(list)
         self._worker_reports: dict[str, set[str]] = {}
+        self._futures: dict[str, Future] = {}
+        self._lock = threading.Lock()
         self.queue.subscribe(self._on_task_pushed)
 
     # -- hooks ------------------------------------------------------------
@@ -87,7 +103,41 @@ class Orchestrator:
 
     def start_task(self, task_id: str) -> None:
         self.wi.start(task_id)
+        task_def = self.wi.workflow.tasks[task_id]
+        if task_def.sla_seconds is not None:
+            self.sla.track(task_id, task_def.sla_seconds, started_at=self.wi.current(task_id).started_at)
         self._emit("onStart", task_id=task_id)
+
+    def check_sla_breaches(self, now: Optional[float] = None) -> list[str]:
+        """Revision reactiva de deadlines (sin cron): se llama en los puntos donde el motor ya reacciona a eventos."""
+        breached = self.sla.check_breaches(now)
+        for task_id in breached:
+            self._emit("onSlaBreach", task_id=task_id)
+        return breached
+
+    def run_task(self, task_id: str, fn: Callable[[], Any]) -> Future:
+        """Inicia la tarea y ejecuta `fn` en `self.executor` (secuencial o concurrente de verdad).
+
+        Al resolverse el Future, completa la tarea automaticamente si `fn` no
+        lanzo excepcion, o levanta un incidente con la excepcion como razon.
+        """
+        self.start_task(task_id)
+        future = self.executor.submit(fn)
+        self._futures[task_id] = future
+
+        def _on_done(f: Future) -> None:
+            self._futures.pop(task_id, None)
+            if f.cancelled():
+                return
+            exc = f.exception()
+            with self._lock:
+                if exc is not None:
+                    self.raise_incident(task_id, reason=str(exc))
+                else:
+                    self.complete_task(task_id)
+
+        future.add_done_callback(_on_done)
+        return future
 
     def report_worker_complete(self, task_id: str, worker_id: str) -> Optional[list[str]]:
         """Registra que `worker_id` termino su parte de `task_id`.
@@ -114,6 +164,7 @@ class Orchestrator:
             if worker is not None:
                 worker.current_load = max(0, worker.current_load - 1)
         self._worker_reports.pop(task_id, None)
+        self.sla.untrack(task_id)
         newly_ready = self.wi.complete(task_id)
         self._emit("onComplete", task_id=task_id, newly_ready=newly_ready)
         for ready_task_id in newly_ready:
@@ -127,12 +178,22 @@ class Orchestrator:
         incident_type: IncidentType = IncidentType.MANUAL_REJECTION,
         reset_scope: ResetScope = ResetScope.ALL_DOWNSTREAM,
     ) -> Incident:
+        self.sla.untrack(task_id)
         incident = self.wi.raise_incident(task_id, reason, incident_type, reset_scope)
         self._emit("onIncident", task_id=task_id, incident=incident)
         return incident
 
     def resolve_incident(self, incident: Incident) -> Optional[list[str]]:
-        """Aplica el reset (S4.6) para `incident`; emite onReset o onRetryExhausted segun corresponda."""
+        """Aplica el reset (S4.6) para `incident`; emite onReset o onRetryExhausted segun corresponda.
+
+        Si la tarea que genero el incidente tenia un Future en vuelo (ejecucion
+        concurrente via `run_task`), se cancela aqui — Python no puede forzar
+        la interrupcion de un hilo ya corriendo, pero si evita que su resultado
+        se procese despues de que el reset ya movio el estado hacia adelante.
+        """
+        future = self._futures.pop(incident.task_id, None)
+        if future is not None:
+            future.cancel()
         reset_targets = self.wi.apply_reset(incident)
         if reset_targets is None:
             self._emit("onRetryExhausted", task_id=incident.task_id, incident=incident)
