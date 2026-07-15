@@ -101,3 +101,12 @@ class ResetScope(Enum):
 
     ALL_DOWNSTREAM = auto()
     SPECIFIC = auto()
+
+
+class WorkflowInstanceStatus(Enum):
+    """Estado global de una WorkflowInstance (ejecucion concreta de una Workflow)."""
+
+    RUNNING = auto()
+    COMPLETED = auto()
+    FAILED = auto()
+    CANCELLED = auto()

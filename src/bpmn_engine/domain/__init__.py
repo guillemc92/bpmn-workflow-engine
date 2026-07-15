@@ -10,6 +10,7 @@ from bpmn_engine.domain.enums import (
     TaskStatus,
     TaskType,
     TransitionType,
+    WorkflowInstanceStatus,
     WorkflowStatus,
 )
 from bpmn_engine.domain.models import (
@@ -33,6 +34,7 @@ __all__ = [
     "TaskStatus",
     "TaskType",
     "TransitionType",
+    "WorkflowInstanceStatus",
     "WorkflowStatus",
     "DependencyMatrix",
     "LogicGate",
