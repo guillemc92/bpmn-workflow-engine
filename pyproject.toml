@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bpmn-workflow-engine"
+version = "0.1.0"
+description = "Motor de workflow tipo BPMN 2.0 (grafos dirigidos, compuertas, orquestacion Observer, incidentes/reintentos, SLA, concurrencia)"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
