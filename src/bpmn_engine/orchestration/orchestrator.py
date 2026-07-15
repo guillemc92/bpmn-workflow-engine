@@ -130,3 +130,14 @@ class Orchestrator:
         incident = self.wi.raise_incident(task_id, reason, incident_type, reset_scope)
         self._emit("onIncident", task_id=task_id, incident=incident)
         return incident
+
+    def resolve_incident(self, incident: Incident) -> Optional[list[str]]:
+        """Aplica el reset (S4.6) para `incident`; emite onReset o onRetryExhausted segun corresponda."""
+        reset_targets = self.wi.apply_reset(incident)
+        if reset_targets is None:
+            self._emit("onRetryExhausted", task_id=incident.task_id, incident=incident)
+            return None
+        self._emit("onReset", task_id=incident.task_id, reset_targets=reset_targets, incident=incident)
+        for target_id in reset_targets:
+            self.queue.push(target_id)
+        return reset_targets

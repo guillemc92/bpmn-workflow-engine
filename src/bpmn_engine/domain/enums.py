@@ -97,7 +97,14 @@ class CompletionPolicy(Enum):
 
 
 class ResetScope(Enum):
-    """Alcance del reset al procesar una transicion BACKWARD."""
+    """Alcance del reset al procesar una transicion BACKWARD.
+
+    ALL_DOWNSTREAM: cancela (si estan en curso) todas las tareas alcanzables
+    hacia adelante desde la tarea objetivo (incluida la propia tarea que
+    genero el incidente) y las libera para que el flujo normal las vuelva a
+    disparar cuando la tarea objetivo se re-complete. SPECIFIC: solo crea una
+    nueva iteracion de la tarea objetivo; el resto del grafo no se toca.
+    """
 
     ALL_DOWNSTREAM = auto()
     SPECIFIC = auto()
